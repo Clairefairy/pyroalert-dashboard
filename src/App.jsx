@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
-const API_BASE = "https://pyroalert-mongodb.onrender.com/api/v1";
+const API_BASE = "https://pyroalert-mongodb.onrender.com";
 
 // Máscaras de formatação
 function maskCPF(value) {
@@ -34,12 +34,36 @@ function maskPhone(value) {
     .replace(/(\d{5})(\d{1,4})$/, "$1-$2");
 }
 
+// Token storage helpers
+const TokenStorage = {
+  save: (tokens) => {
+    localStorage.setItem("pyroalert_access_token", tokens.access_token);
+    localStorage.setItem("pyroalert_refresh_token", tokens.refresh_token);
+    localStorage.setItem("pyroalert_token_expiry", String(Date.now() + tokens.expires_in * 1000));
+  },
+  get: () => ({
+    access_token: localStorage.getItem("pyroalert_access_token"),
+    refresh_token: localStorage.getItem("pyroalert_refresh_token"),
+    expiry: Number(localStorage.getItem("pyroalert_token_expiry")) || 0,
+  }),
+  clear: () => {
+    localStorage.removeItem("pyroalert_access_token");
+    localStorage.removeItem("pyroalert_refresh_token");
+    localStorage.removeItem("pyroalert_token_expiry");
+  },
+  isExpired: () => {
+    const expiry = Number(localStorage.getItem("pyroalert_token_expiry")) || 0;
+    return Date.now() > expiry - 60000; // 1 min buffer
+  },
+};
+
 export default function App() {
   const [route, setRoute] = useState("login");
   const [activeTab, setActiveTab] = useState("login");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [user, setUser] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
 
   const [signup, setSignup] = useState({
     name: "",
@@ -54,6 +78,117 @@ export default function App() {
 
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
 
+  // Refresh token function
+  const refreshAccessToken = useCallback(async () => {
+    const { refresh_token } = TokenStorage.get();
+    if (!refresh_token) return false;
+
+    try {
+      const response = await fetch(`${API_BASE}/oauth/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token,
+        }),
+      });
+
+      if (!response.ok) {
+        TokenStorage.clear();
+        return false;
+      }
+
+      const data = await response.json();
+      TokenStorage.save(data);
+      return true;
+    } catch {
+      TokenStorage.clear();
+      return false;
+    }
+  }, []);
+
+  // Introspect token to get user info
+  const introspectToken = useCallback(async () => {
+    const { access_token } = TokenStorage.get();
+    if (!access_token) return null;
+
+    try {
+      const response = await fetch(`${API_BASE}/oauth/introspect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: access_token }),
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      if (!data.active) return null;
+
+      return {
+        id: data.sub,
+        email: data.email,
+        name: data.name || data.email,
+        role: data.role || "viewer",
+        scope: data.scope,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Check existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      const { access_token } = TokenStorage.get();
+      
+      if (!access_token) {
+        setIsInitializing(false);
+        return;
+      }
+
+      // Check if token expired
+      if (TokenStorage.isExpired()) {
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) {
+          setIsInitializing(false);
+          return;
+        }
+      }
+
+      // Get user info
+      const userInfo = await introspectToken();
+      if (userInfo) {
+        setUser(userInfo);
+        setRoute("dashboard");
+      } else {
+        TokenStorage.clear();
+      }
+
+      setIsInitializing(false);
+    };
+
+    checkSession();
+  }, [refreshAccessToken, introspectToken]);
+
+  // Auto refresh token before expiry
+  useEffect(() => {
+    if (route !== "dashboard") return;
+
+    const { expiry } = TokenStorage.get();
+    const timeUntilExpiry = expiry - Date.now() - 60000; // Refresh 1 min before
+
+    if (timeUntilExpiry <= 0) return;
+
+    const timeout = setTimeout(async () => {
+      const refreshed = await refreshAccessToken();
+      if (!refreshed) {
+        logout();
+      }
+    }, timeUntilExpiry);
+
+    return () => clearTimeout(timeout);
+  }, [route, refreshAccessToken]);
+
   function handleSignupChange(e) {
     const { name, value } = e.target;
     
@@ -64,7 +199,6 @@ export default function App() {
     } else if (name === "phone") {
       maskedValue = maskPhone(value);
     } else if (name === "id_type") {
-      // Limpar o número quando trocar o tipo de documento
       setSignup((s) => ({ ...s, [name]: value, id_number: "" }));
       setError("");
       return;
@@ -97,15 +231,12 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // Remove formatação antes de enviar para a API
       const cleanPhone = signup.phone.replace(/\D/g, "");
       const cleanIdNumber = signup.id_number.replace(/\D/g, "");
 
-      const response = await fetch(`${API_BASE}/auth/register`, {
+      const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: signup.email,
           password: signup.password,
@@ -150,26 +281,40 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE}/auth/login`, {
+      // OAuth2 Password Grant
+      const response = await fetch(`${API_BASE}/oauth/token`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          grant_type: "password",
           email: loginForm.email,
           password: loginForm.password,
+          scope: "read write",
         }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || "Credenciais inválidas");
+        throw new Error(data.error_description || data.error || "Credenciais inválidas");
       }
 
-      setUser(data.user || data);
+      // Save tokens
+      TokenStorage.save(data);
+
+      // Get user info via introspection
+      const userInfo = await introspectToken();
+      
+      if (userInfo) {
+        setUser(userInfo);
+      } else {
+        // Fallback if introspection fails
+        setUser({ email: loginForm.email });
+      }
+
       setRoute("dashboard");
       setError("");
+      setLoginForm({ email: "", password: "" });
     } catch (err) {
       setError(err.message || "Erro ao conectar com o servidor");
     } finally {
@@ -177,10 +322,42 @@ export default function App() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    const { access_token } = TokenStorage.get();
+    
+    // Revoke token (best effort)
+    if (access_token) {
+      try {
+        await fetch(`${API_BASE}/oauth/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: access_token }),
+        });
+      } catch {
+        // Ignore errors on revoke
+      }
+    }
+
+    TokenStorage.clear();
     setRoute("login");
     setLoginForm({ email: "", password: "" });
     setUser(null);
+  }
+
+  // Show loading screen while checking session
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center animate-pulse">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-7 h-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+            </svg>
+          </div>
+          <p className="text-slate-400">Carregando...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
