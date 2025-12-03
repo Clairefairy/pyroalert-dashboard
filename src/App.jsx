@@ -4,9 +4,118 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 const API_BASE = "https://pyroalert-mongodb.onrender.com";
+const ADAFRUIT_API = "https://io.adafruit.com/api/v2/pyroalert/feeds";
 
-// Dados fictícios dos dispositivos
-const MOCK_DEVICES = [
+// Função para converter valor do sensor de fumaça para porcentagem (0-4.8 = 0-100%)
+function convertSmokeToPercent(value) {
+  const percent = (value / 4.8) * 100;
+  return Math.min(100, Math.max(0, percent)).toFixed(1);
+}
+
+// Função para converter valor do sensor de umidade do solo para porcentagem
+// Fórmula: y = -65.79x + 169.08 (pode resultar em valores negativos)
+function convertSoilHumidityToPercent(value) {
+  const percent = -65.79 * value + 169.08;
+  return percent.toFixed(1); // Permite valores negativos
+}
+
+// Função para calcular o nível e porcentagem de risco baseado nos valores de referência
+// Tabela de referência (Nordeste do Brasil):
+// Temperatura: < 28°C (baixo), 28-33°C (moderado), 33-38°C (alto), > 38°C (crítico)
+// Umidade Ar: > 45% (baixo), 30-45% (moderado), 20-30% (alto), < 20% (crítico)
+// Umidade Solo: > 30% (baixo), 20-30% (moderado), 10-20% (alto), < 10% (crítico)
+// Fumaça: 0-3% (baixo), 3-6% (moderado), 6-10% (alto), > 10% (crítico)
+// Sensação Térmica: < 30°C (baixo), 30-36°C (moderado), 36-40°C (alto), > 40°C (crítico)
+function calculateRiskFromSensors(device) {
+  let riskPoints = 0;
+  
+  // Temperatura (0-3 pontos)
+  if (device.temperature < 28) riskPoints += 0;
+  else if (device.temperature <= 33) riskPoints += 1;
+  else if (device.temperature <= 38) riskPoints += 2;
+  else riskPoints += 3;
+  
+  // Umidade do Ar (0-3 pontos) - invertido, menor é pior
+  if (device.airHumidity > 45) riskPoints += 0;
+  else if (device.airHumidity >= 30) riskPoints += 1;
+  else if (device.airHumidity >= 20) riskPoints += 2;
+  else riskPoints += 3;
+  
+  // Umidade do Solo (0-3 pontos) - invertido, menor é pior
+  if (device.soilHumidity > 30) riskPoints += 0;
+  else if (device.soilHumidity >= 20) riskPoints += 1;
+  else if (device.soilHumidity >= 10) riskPoints += 2;
+  else riskPoints += 3;
+  
+  // Fumaça (0-3 pontos)
+  const smokePercent = parseFloat(device.smokePercent) || 0;
+  if (smokePercent <= 3) riskPoints += 0;
+  else if (smokePercent <= 6) riskPoints += 1;
+  else if (smokePercent <= 10) riskPoints += 2;
+  else riskPoints += 3;
+  
+  // Sensação Térmica (0-3 pontos)
+  if (device.heatIndex < 30) riskPoints += 0;
+  else if (device.heatIndex <= 36) riskPoints += 1;
+  else if (device.heatIndex <= 40) riskPoints += 2;
+  else riskPoints += 3;
+  
+  // Converter pontos (0-15) para porcentagem e nível
+  const riskPercent = Math.round((riskPoints / 15) * 100);
+  
+  let riskLevel;
+  if (riskPercent <= 25) riskLevel = "low";
+  else if (riskPercent <= 50) riskLevel = "moderate";
+  else if (riskPercent <= 75) riskLevel = "high";
+  else riskLevel = "critical";
+  
+  return { riskLevel, riskPercent };
+}
+
+// Função para buscar dados da API Adafruit
+async function fetchAdafruitData() {
+  try {
+    const feeds = [
+      { key: "pyroalert.fumo", field: "smoke" },
+      { key: "pyroalert.umisolo", field: "soilHumidity" },
+      { key: "pyroalert.temp22", field: "airHumidity" },
+      { key: "pyroalert.umi22", field: "temperature" },
+      { key: "pyroalert.sense22", field: "heatIndex" },
+    ];
+    
+    const results = await Promise.all(
+      feeds.map(async (feed) => {
+        const response = await fetch(`${ADAFRUIT_API}/${feed.key}`);
+        const data = await response.json();
+        return { field: feed.field, value: parseFloat(data.last_value) || 0 };
+      })
+    );
+    
+    const sensorData = { rawValues: {} };
+    results.forEach(({ field, value }) => {
+      sensorData.rawValues[field] = value; // Armazenar valores brutos
+      sensorData[field] = value;
+    });
+    
+    // Guardar valor bruto de umidade do solo ANTES de converter
+    const rawSoilHumidity = sensorData.soilHumidity;
+    sensorData.rawValues.soilHumidityRaw = rawSoilHumidity; // Valor bruto da API
+    
+    // Converter fumaça para porcentagem
+    sensorData.smokePercent = convertSmokeToPercent(sensorData.smoke || 0);
+    
+    // Converter umidade do solo para porcentagem: y = -65.79x + 169.08
+    sensorData.soilHumidity = parseFloat(convertSoilHumidityToPercent(rawSoilHumidity));
+    
+    return sensorData;
+  } catch (error) {
+    console.error("Erro ao buscar dados do Adafruit:", error);
+    return null;
+  }
+}
+
+// Dados base dos dispositivos (dispositivo 1 será atualizado com dados reais)
+const INITIAL_DEVICES = [
   {
     id: "001",
     name: "Dispositivo 001",
@@ -18,7 +127,10 @@ const MOCK_DEVICES = [
     airHumidity: 15,
     soilHumidity: 8,
     temperature: 32,
-    gasDetected: true,
+    heatIndex: 35,
+    smokePercent: 9.5,
+    isRealData: true, // Dispositivo com dados reais da API
+    rawValues: {}, // Será preenchido com dados da API
   },
   {
     id: "002",
@@ -31,7 +143,9 @@ const MOCK_DEVICES = [
     airHumidity: 45,
     soilHumidity: 22,
     temperature: 28,
-    gasDetected: false,
+    heatIndex: 30,
+    smokePercent: 3.8,
+    isRealData: false,
   },
   {
     id: "003",
@@ -44,7 +158,9 @@ const MOCK_DEVICES = [
     airHumidity: 10,
     soilHumidity: 5,
     temperature: 38,
-    gasDetected: true,
+    heatIndex: 42,
+    smokePercent: 12.9,
+    isRealData: false,
   },
   {
     id: "004",
@@ -57,7 +173,9 @@ const MOCK_DEVICES = [
     airHumidity: 65,
     soilHumidity: 40,
     temperature: 24,
-    gasDetected: false,
+    heatIndex: 25,
+    smokePercent: 2.5,
+    isRealData: false,
   },
 ];
 
@@ -384,12 +502,18 @@ function Spinner({ className = "w-5 h-5" }) {
 
 // Risk colors
 const getRiskColor = (level) => ({
+  critical: { bg: "rgb(127, 29, 29)", pulse: "rgba(127, 29, 29, 0.4)" }, // Vermelho escuro
   high: { bg: "rgb(239, 68, 68)", pulse: "rgba(239, 68, 68, 0.4)" },
   moderate: { bg: "rgb(245, 158, 11)", pulse: "rgba(245, 158, 11, 0.4)" },
   low: { bg: "rgb(34, 197, 94)", pulse: "rgba(34, 197, 94, 0.4)" },
 }[level] || { bg: "rgb(34, 197, 94)", pulse: "rgba(34, 197, 94, 0.4)" });
 
-const getRiskLabel = (level) => ({ high: "ALTO RISCO", moderate: "MODERADO", low: "BAIXO RISCO" }[level] || level);
+const getRiskLabel = (level) => ({ 
+  critical: "CRÍTICO", 
+  high: "ALTO RISCO", 
+  moderate: "MODERADO", 
+  low: "BAIXO RISCO" 
+}[level] || level);
 
 // Device Marker Component
 function DeviceMarker({ device, onClick }) {
@@ -450,11 +574,42 @@ function DeviceMarker({ device, onClick }) {
 }
 
 // Device Info Modal
+// Componente de sensor com tooltip para valor bruto
+function SensorCard({ label, value, unit, icon, rawValue, rawLabel, className = "" }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  
+  return (
+    <div 
+      className={`bg-slate-800/50 rounded-xl p-3 border border-white/5 relative cursor-pointer transition-all hover:bg-slate-700/50 ${className}`}
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+        {icon}
+        {label}
+      </div>
+      <p className="text-xl font-bold text-white">{value}{unit}</p>
+      
+      {/* Tooltip com valor bruto */}
+      {showTooltip && rawValue !== undefined && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-950 border border-white/20 rounded-lg shadow-xl z-10 whitespace-nowrap">
+          <p className="text-xs text-slate-300">
+            <span className="text-slate-500">{rawLabel || "Valor bruto"}:</span> {rawValue}
+          </p>
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-950" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DeviceInfoModal({ device, onClose }) {
   if (!device) return null;
   
   const colors = getRiskColor(device.riskLevel);
   const riskLabel = getRiskLabel(device.riskLevel);
+  const raw = device.rawValues || {};
+  const smokePercent = parseFloat(device.smokePercent) || 0;
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
@@ -510,54 +665,84 @@ function DeviceInfoModal({ device, onClose }) {
         </div>
         
         {/* Sensor data */}
-        <div className="px-6 pb-6 grid grid-cols-2 gap-3">
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
-            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-              </svg>
-              Umidade do Ar
-            </div>
-            <p className="text-2xl font-bold text-white">{device.airHumidity}%</p>
-          </div>
+        <div className="px-6 pb-4 grid grid-cols-2 gap-3">
+          <SensorCard 
+            label="Temperatura"
+            value={device.temperature}
+            unit="°C"
+            rawValue={device.isRealData ? raw.temperature : undefined}
+            rawLabel="API (umi22)"
+            icon={<svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>}
+          />
           
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
-            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              Umidade do Solo
-            </div>
-            <p className="text-2xl font-bold text-white">{device.soilHumidity}%</p>
-          </div>
+          <SensorCard 
+            label="Sens. Térmica"
+            value={device.heatIndex}
+            unit="°C"
+            rawValue={device.isRealData ? raw.heatIndex : undefined}
+            rawLabel="API (sense22)"
+            icon={<svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>}
+          />
           
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
-            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              Temperatura
-            </div>
-            <p className="text-2xl font-bold text-white">{device.temperature}°C</p>
-          </div>
+          <SensorCard 
+            label="Umidade Ar"
+            value={device.airHumidity}
+            unit="%"
+            rawValue={device.isRealData ? raw.airHumidity : undefined}
+            rawLabel="API (temp22)"
+            icon={<svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>}
+          />
           
-          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
-            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+          <SensorCard 
+            label="Umidade Solo"
+            value={typeof device.soilHumidity === 'number' ? device.soilHumidity.toFixed(1) : device.soilHumidity}
+            unit="%"
+            rawValue={device.isRealData ? raw.soilHumidityRaw : undefined}
+            rawLabel="API (umisolo)"
+            icon={<svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>}
+          />
+          
+          <div 
+            className="col-span-2 bg-slate-800/50 rounded-xl p-3 border border-white/5 relative cursor-pointer transition-all hover:bg-slate-700/50 group"
+          >
+            <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
               </svg>
-              Gás Inflamável
+              Fumaça
             </div>
-            <p className={`text-xl font-bold ${device.gasDetected ? "text-orange-500" : "text-emerald-400"}`}>
-              {device.gasDetected ? "DETECTADO" : "NORMAL"}
+            <p className={`text-xl font-bold ${smokePercent > 10 ? "text-red-500" : smokePercent > 6 ? "text-orange-500" : smokePercent > 3 ? "text-yellow-500" : "text-emerald-400"}`}>
+              {smokePercent.toFixed(1)}% {smokePercent > 10 ? "🔥" : smokePercent > 6 ? "⚠️" : "✓"}
             </p>
+            
+            {/* Tooltip para fumaça */}
+            {device.isRealData && raw.smoke !== undefined && (
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-950 border border-white/20 rounded-lg shadow-xl z-10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
+                <p className="text-xs text-slate-300">
+                  <span className="text-slate-500">API (fumo):</span> {raw.smoke}
+                </p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-950" />
+              </div>
+            )}
           </div>
         </div>
         
-        {/* Location */}
-        <div className="px-6 pb-6">
+        {/* Location and Data Source */}
+        <div className="px-6 pb-4 space-y-2">
           <p className="text-sm text-slate-400">
-            <span className="font-medium text-slate-300">Localização:</span> Latitude {device.lat}, Longitude {device.lng}
+            <span className="font-medium text-slate-300">Localização:</span> {device.lat.toFixed(6)}, {device.lng.toFixed(6)}
+          </p>
+          <p className="text-xs">
+            {device.isRealData ? (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded-full border border-emerald-500/30">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                Dados obtidos do Adafruit IO
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-500/20 text-slate-400 rounded-full border border-slate-500/30">
+                Dados simulados
+              </span>
+            )}
           </p>
         </div>
         
@@ -609,20 +794,20 @@ function calculateDevicesCenter(devices) {
 }
 
 // Device Map Component (Leaflet + OpenStreetMap)
-function DeviceMap() {
+function DeviceMap({ devices = INITIAL_DEVICES }) {
   const [selectedDevice, setSelectedDevice] = useState(null);
   
   // Calculate center based on all devices
-  const center = useMemo(() => calculateDevicesCenter(MOCK_DEVICES), []);
+  const center = useMemo(() => calculateDevicesCenter(devices), [devices]);
   
   // Create icons for each device (memoized to avoid recreation)
   const deviceIcons = useMemo(() => {
     const icons = {};
-    MOCK_DEVICES.forEach(device => {
+    devices.forEach(device => {
       icons[device.id] = createDeviceIcon(device);
     });
     return icons;
-  }, []);
+  }, [devices]);
   
   return (
     <>
@@ -646,7 +831,7 @@ function DeviceMap() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             
-            {MOCK_DEVICES.map((device) => (
+            {devices.map((device) => (
               <Marker
                 key={device.id}
                 position={[device.lat, device.lng]}
@@ -659,18 +844,22 @@ function DeviceMap() {
           </MapContainer>
           
           {/* Legend */}
-          <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/90 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/10 flex items-center gap-4">
+          <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/90 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/10 flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full" style={{ backgroundColor: "rgb(127, 29, 29)" }} />
+              <span className="text-xs text-slate-300">Crítico</span>
+            </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-red-500" />
-              <span className="text-sm text-slate-300">Alto risco</span>
+              <span className="text-xs text-slate-300">Alto</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-amber-500" />
-              <span className="text-sm text-slate-300">Moderado</span>
+              <span className="text-xs text-slate-300">Moderado</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-emerald-500" />
-              <span className="text-sm text-slate-300">Baixo risco</span>
+              <span className="text-xs text-slate-300">Baixo</span>
             </div>
           </div>
         </div>
@@ -1145,7 +1334,71 @@ function DarkInput({ label, ...props }) {
 // Dashboard
 function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
   const [isLoading, setIsLoading] = useState(false);
-  const sensorData = { temperature: 28.4, humidity: 54, gas: 120, lastUpdate: new Date().toLocaleString("pt-BR") };
+  const [devices, setDevices] = useState(INITIAL_DEVICES);
+  const [lastUpdate, setLastUpdate] = useState(new Date().toLocaleString("pt-BR"));
+
+  // Função para atualizar dados do Dispositivo 1 com dados reais da API
+  const updateDeviceData = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const adafruitData = await fetchAdafruitData();
+      if (adafruitData) {
+        setDevices(prevDevices => 
+          prevDevices.map(device => {
+            if (device.id === "001") {
+              const updatedDevice = {
+                ...device,
+                temperature: adafruitData.temperature || device.temperature,
+                airHumidity: adafruitData.airHumidity || device.airHumidity,
+                soilHumidity: adafruitData.soilHumidity || device.soilHumidity,
+                heatIndex: adafruitData.heatIndex || device.heatIndex,
+                smokePercent: parseFloat(adafruitData.smokePercent) || device.smokePercent,
+                rawValues: adafruitData.rawValues || {},
+              };
+              // Calcular risco baseado nos sensores
+              const { riskLevel, riskPercent } = calculateRiskFromSensors(updatedDevice);
+              return { ...updatedDevice, riskLevel, riskPercent };
+            }
+            // Recalcular risco para dispositivos simulados também
+            const { riskLevel, riskPercent } = calculateRiskFromSensors(device);
+            return { ...device, riskLevel, riskPercent };
+          })
+        );
+        setLastUpdate(new Date().toLocaleString("pt-BR"));
+      }
+    } catch (error) {
+      console.error("Erro ao atualizar dados:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Buscar dados ao carregar e a cada 30 segundos
+  useEffect(() => {
+    updateDeviceData();
+    const interval = setInterval(updateDeviceData, 30000);
+    return () => clearInterval(interval);
+  }, [updateDeviceData]);
+
+  // Calcular médias de todos os dispositivos
+  const averages = useMemo(() => {
+    const sum = devices.reduce((acc, d) => ({
+      temperature: acc.temperature + d.temperature,
+      airHumidity: acc.airHumidity + d.airHumidity,
+      soilHumidity: acc.soilHumidity + d.soilHumidity,
+      heatIndex: acc.heatIndex + d.heatIndex,
+      smokePercent: acc.smokePercent + (parseFloat(d.smokePercent) || 0),
+    }), { temperature: 0, airHumidity: 0, soilHumidity: 0, heatIndex: 0, smokePercent: 0 });
+    
+    const count = devices.length;
+    return {
+      temperature: (sum.temperature / count).toFixed(1),
+      airHumidity: Math.round(sum.airHumidity / count),
+      soilHumidity: Math.round(sum.soilHumidity / count),
+      heatIndex: (sum.heatIndex / count).toFixed(1),
+      smokePercent: (sum.smokePercent / count).toFixed(1),
+    };
+  }, [devices]);
 
   return (
     <div className="w-full max-w-6xl">
@@ -1154,7 +1407,7 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
           <img src="/LogoPyro.svg" alt="Pyro Alert" className="w-14 h-14" />
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-white">Dashboard Pyro Alert</h1>
-            <p className="text-slate-400">Monitoramento em tempo real</p>
+            <p className="text-slate-400">Monitoramento de riscos de incêndio</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -1170,7 +1423,7 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
               <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
             </button>
           )}
-          <button onClick={() => { setIsLoading(true); setTimeout(() => setIsLoading(false), 1000); }} disabled={isLoading} className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium transition-all border border-white/10">
+          <button onClick={updateDeviceData} disabled={isLoading} className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium transition-all border border-white/10">
             <svg xmlns="http://www.w3.org/2000/svg" className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             Atualizar
           </button>
@@ -1181,70 +1434,82 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
         </div>
       </div>
 
-      {/* Sensor Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      {/* Sensor Cards - Médias de todos os dispositivos */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
         {/* Temperature */}
-        <div className="bg-gradient-to-br from-orange-500/20 to-red-500/20 backdrop-blur-xl p-6 rounded-2xl border border-orange-500/20">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-orange-300 uppercase tracking-wide">Temperatura</span>
-            <div className="w-10 h-10 bg-orange-500/20 rounded-xl flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <div className="bg-gradient-to-br from-orange-500/20 to-red-500/20 backdrop-blur-xl p-5 rounded-2xl border border-orange-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-medium text-orange-300 uppercase tracking-wide">Temperatura</span>
+            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
             </div>
           </div>
-          <div className="text-5xl font-bold text-white mb-2">{sensorData.temperature}°C</div>
-          <p className="text-sm text-slate-400">Campo 1 - ThingSpeak</p>
+          <div className="text-3xl font-bold text-white mb-1">{averages.temperature}°C</div>
+          <p className="text-xs text-slate-400">Média dos dispositivos</p>
         </div>
 
-        {/* Humidity */}
-        <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-xl p-6 rounded-2xl border border-blue-500/20">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-blue-300 uppercase tracking-wide">Umidade</span>
-            <div className="w-10 h-10 bg-blue-500/20 rounded-xl flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        {/* Air Humidity */}
+        <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-xl p-5 rounded-2xl border border-blue-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-medium text-blue-300 uppercase tracking-wide">Umidade Ar</span>
+            <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
               </svg>
             </div>
           </div>
-          <div className="text-5xl font-bold text-white mb-2">{sensorData.humidity}%</div>
-          <p className="text-sm text-slate-400">Campo 2 - ThingSpeak</p>
+          <div className="text-3xl font-bold text-white mb-1">{averages.airHumidity}%</div>
+          <p className="text-xs text-slate-400">Média dos dispositivos</p>
         </div>
 
-        {/* Gas */}
-        <div className="bg-gradient-to-br from-emerald-500/20 to-green-500/20 backdrop-blur-xl p-6 rounded-2xl border border-emerald-500/20">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-medium text-emerald-300 uppercase tracking-wide">Gás (MQ)</span>
-            <div className="w-10 h-10 bg-emerald-500/20 rounded-xl flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        {/* Soil Humidity */}
+        <div className="bg-gradient-to-br from-amber-500/20 to-yellow-500/20 backdrop-blur-xl p-5 rounded-2xl border border-amber-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-medium text-amber-300 uppercase tracking-wide">Umidade Solo</span>
+            <div className="w-8 h-8 bg-amber-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-white mb-1">{averages.soilHumidity}%</div>
+          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+        </div>
+
+        {/* Heat Index */}
+        <div className="bg-gradient-to-br from-rose-500/20 to-pink-500/20 backdrop-blur-xl p-5 rounded-2xl border border-rose-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-medium text-rose-300 uppercase tracking-wide">Sens. Térmica</span>
+            <div className="w-8 h-8 bg-rose-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </div>
+          </div>
+          <div className="text-3xl font-bold text-white mb-1">{averages.heatIndex}°C</div>
+          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+        </div>
+
+        {/* Smoke */}
+        <div className="bg-gradient-to-br from-emerald-500/20 to-green-500/20 backdrop-blur-xl p-5 rounded-2xl border border-emerald-500/20">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-medium text-emerald-300 uppercase tracking-wide">Fumaça</span>
+            <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
               </svg>
             </div>
           </div>
-          <div className="text-5xl font-bold text-white mb-2">{sensorData.gas} ppm</div>
-          <p className="text-sm text-slate-400">Campo 3 - ThingSpeak</p>
+          <div className="text-3xl font-bold text-white mb-1">{averages.smokePercent}%</div>
+          <p className="text-xs text-slate-400">Média dos dispositivos</p>
         </div>
       </div>
 
       {/* Device Map */}
       <div className="mb-8">
-        <DeviceMap />
-      </div>
-
-      {/* Raw Data Card */}
-      <div className="bg-white/5 backdrop-blur-xl p-6 rounded-2xl border border-white/10">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-white">Última leitura bruta</h3>
-          <span className="text-sm text-slate-400">{sensorData.lastUpdate}</span>
-        </div>
-        <pre className="bg-slate-900/50 text-slate-300 p-4 rounded-xl text-sm overflow-x-auto font-mono">
-{`{
-  "field1": "${sensorData.temperature}",
-  "field2": "${sensorData.humidity}",
-  "field3": "${sensorData.gas}",
-  "created_at": "${new Date().toISOString()}"
-}`}
-        </pre>
+        <DeviceMap devices={devices} />
       </div>
 
       <p className="text-center text-sm text-slate-500 mt-8">Pyro Alert © 2025</p>

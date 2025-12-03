@@ -151,10 +151,25 @@ input:focus, select:focus {
   cursor: pointer;
   width: 120px;
   height: 90px;
+  transition: transform 0.3s ease;
+}
+
+.device-marker-wrapper:hover {
+  transform: scale(1.2);
+  z-index: 1000 !important;
 }
 
 .device-marker-wrapper:hover .marker-icon {
-  transform: scale(1.1);
+  transform: translateX(-50%) scale(1.15);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.device-marker-wrapper:hover .marker-label {
+  transform: translateX(-50%) scale(1.05);
+}
+
+.device-marker-wrapper:hover .marker-badge {
+  transform: translateX(-50%) scale(1.1);
 }
 
 .device-marker-wrapper .pulse-ring {
@@ -202,7 +217,7 @@ input:focus, select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
   z-index: 10;
   backdrop-filter: blur(4px);
 }
@@ -219,6 +234,7 @@ input:focus, select:focus {
   color: white;
   z-index: 20;
   white-space: nowrap;
+  transition: transform 0.3s ease;
 }
 
 .marker-label {
@@ -236,6 +252,7 @@ input:focus, select:focus {
   border: 1px solid rgba(255, 255, 255, 0.15);
   z-index: 20;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s ease;
 }
 
 .marker-icon {
