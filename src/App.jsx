@@ -1,6 +1,65 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 const API_BASE = "https://pyroalert-mongodb.onrender.com";
+
+// Dados fictícios dos dispositivos
+const MOCK_DEVICES = [
+  {
+    id: "001",
+    name: "Dispositivo 001",
+    lat: -23.5505,
+    lng: -46.6333,
+    status: "active",
+    riskLevel: "moderate",
+    riskPercent: 75,
+    airHumidity: 15,
+    soilHumidity: 8,
+    temperature: 32,
+    gasDetected: true,
+  },
+  {
+    id: "002",
+    name: "Dispositivo 002",
+    lat: -23.5605,
+    lng: -46.6133,
+    status: "active",
+    riskLevel: "moderate",
+    riskPercent: 40,
+    airHumidity: 45,
+    soilHumidity: 22,
+    temperature: 28,
+    gasDetected: false,
+  },
+  {
+    id: "003",
+    name: "Dispositivo 003",
+    lat: -23.5405,
+    lng: -46.6533,
+    status: "active",
+    riskLevel: "high",
+    riskPercent: 85,
+    airHumidity: 10,
+    soilHumidity: 5,
+    temperature: 38,
+    gasDetected: true,
+  },
+  {
+    id: "004",
+    name: "Dispositivo 004",
+    lat: -23.5655,
+    lng: -46.6033,
+    status: "active",
+    riskLevel: "low",
+    riskPercent: 25,
+    airHumidity: 65,
+    soilHumidity: 40,
+    temperature: 24,
+    gasDetected: false,
+  },
+];
 
 // Máscaras de formatação
 function maskCPF(value) {
@@ -327,6 +386,294 @@ function FireIcon({ className }) {
 
 function Spinner({ className = "w-5 h-5" }) {
   return <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>;
+}
+
+// Risk colors
+const getRiskColor = (level) => ({
+  high: { bg: "rgb(239, 68, 68)", pulse: "rgba(239, 68, 68, 0.4)" },
+  moderate: { bg: "rgb(245, 158, 11)", pulse: "rgba(245, 158, 11, 0.4)" },
+  low: { bg: "rgb(34, 197, 94)", pulse: "rgba(34, 197, 94, 0.4)" },
+}[level] || { bg: "rgb(34, 197, 94)", pulse: "rgba(34, 197, 94, 0.4)" });
+
+const getRiskLabel = (level) => ({ high: "ALTO RISCO", moderate: "MODERADO", low: "BAIXO RISCO" }[level] || level);
+
+// Device Marker Component
+function DeviceMarker({ device, onClick }) {
+  const colors = getRiskColor(device.riskLevel);
+  
+  return (
+    <div className="relative cursor-pointer group" onClick={() => onClick(device)}>
+      {/* Pulsing circles */}
+      <div 
+        className="absolute rounded-full animate-ping-slow"
+        style={{
+          width: 80,
+          height: 80,
+          left: -40,
+          top: -40,
+          backgroundColor: colors.pulse,
+        }}
+      />
+      <div 
+        className="absolute rounded-full animate-ping-slower"
+        style={{
+          width: 100,
+          height: 100,
+          left: -50,
+          top: -50,
+          backgroundColor: colors.pulse,
+          opacity: 0.5,
+        }}
+      />
+      
+      {/* Main marker */}
+      <div 
+        className="relative w-12 h-12 rounded-xl flex items-center justify-center shadow-lg transform -translate-x-1/2 -translate-y-1/2 border-2 transition-transform group-hover:scale-110"
+        style={{ 
+          backgroundColor: `${colors.bg}33`,
+          borderColor: colors.bg,
+        }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke={colors.bg} strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+      </div>
+      
+      {/* Risk percentage badge */}
+      <div 
+        className="absolute -top-8 left-1/2 transform -translate-x-1/2 px-2 py-0.5 rounded-full text-xs font-bold text-white"
+        style={{ backgroundColor: colors.bg }}
+      >
+        {device.riskPercent}%
+      </div>
+      
+      {/* Device name label */}
+      <div className="absolute top-8 left-1/2 transform -translate-x-1/2 whitespace-nowrap bg-slate-900/90 px-3 py-1 rounded-lg text-sm font-medium text-white border border-white/10">
+        {device.name}
+      </div>
+    </div>
+  );
+}
+
+// Device Info Modal
+function DeviceInfoModal({ device, onClose }) {
+  if (!device) return null;
+  
+  const colors = getRiskColor(device.riskLevel);
+  const riskLabel = getRiskLabel(device.riskLevel);
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div 
+        className="bg-slate-900 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-white/10 animate-scale-in"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Status badge */}
+        <div className="px-4 pt-4">
+          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Ativo
+          </span>
+        </div>
+        
+        {/* Risk section */}
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Risco de Incêndio</h3>
+            <span 
+              className="px-3 py-1 rounded-full text-xs font-bold text-white"
+              style={{ backgroundColor: colors.bg }}
+            >
+              {riskLabel}
+            </span>
+          </div>
+          
+          {/* Stars */}
+          <div className="flex justify-center gap-1 mb-3">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <svg 
+                key={star} 
+                xmlns="http://www.w3.org/2000/svg" 
+                className="w-6 h-6" 
+                fill={star <= Math.ceil(device.riskPercent / 20) ? "#f59e0b" : "none"} 
+                viewBox="0 0 24 24" 
+                stroke="#f59e0b" 
+                strokeWidth="2"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+              </svg>
+            ))}
+          </div>
+          
+          {/* Progress bar */}
+          <div className="h-2 bg-slate-700 rounded-full overflow-hidden mb-2">
+            <div 
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${device.riskPercent}%`, backgroundColor: colors.bg }}
+            />
+          </div>
+          <p className="text-center text-sm text-slate-400">Probabilidade: {device.riskPercent}%</p>
+        </div>
+        
+        {/* Sensor data */}
+        <div className="px-6 pb-6 grid grid-cols-2 gap-3">
+          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+              </svg>
+              Umidade do Ar
+            </div>
+            <p className="text-2xl font-bold text-white">{device.airHumidity}%</p>
+          </div>
+          
+          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+              Umidade do Solo
+            </div>
+            <p className="text-2xl font-bold text-white">{device.soilHumidity}%</p>
+          </div>
+          
+          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Temperatura
+            </div>
+            <p className="text-2xl font-bold text-white">{device.temperature}°C</p>
+          </div>
+          
+          <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
+            <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+              </svg>
+              Gás Inflamável
+            </div>
+            <p className={`text-xl font-bold ${device.gasDetected ? "text-orange-500" : "text-emerald-400"}`}>
+              {device.gasDetected ? "DETECTADO" : "NORMAL"}
+            </p>
+          </div>
+        </div>
+        
+        {/* Location */}
+        <div className="px-6 pb-6">
+          <p className="text-sm text-slate-400">
+            <span className="font-medium text-slate-300">Localização:</span> Latitude {device.lat}, Longitude {device.lng}
+          </p>
+        </div>
+        
+        {/* Close button */}
+        <button 
+          onClick={onClose}
+          className="w-full py-4 bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors font-medium border-t border-white/10"
+        >
+          Fechar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Create custom icon for device marker
+// Create custom Leaflet icon for a device
+function createDeviceIcon(device) {
+  const colors = getRiskColor(device.riskLevel);
+  
+  return L.divIcon({
+    className: 'custom-device-marker',
+    html: `
+      <div class="device-marker-wrapper">
+        <div class="pulse-ring" style="background-color: ${colors.pulse}"></div>
+        <div class="pulse-ring pulse-ring-delayed" style="background-color: ${colors.pulse}"></div>
+        <div class="marker-icon" style="background-color: ${colors.bg}22; border-color: ${colors.bg}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="${colors.bg}" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+        </div>
+        <div class="marker-badge" style="background-color: ${colors.bg}">${device.riskPercent}%</div>
+        <div class="marker-label">${device.name}</div>
+      </div>
+    `,
+    iconSize: [120, 90],
+    iconAnchor: [60, 45],
+  });
+}
+
+// Device Map Component (Leaflet + OpenStreetMap)
+function DeviceMap() {
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  
+  // São Paulo center
+  const center = useMemo(() => [-23.5550, -46.6333], []);
+  
+  // Create icons for each device (memoized to avoid recreation)
+  const deviceIcons = useMemo(() => {
+    const icons = {};
+    MOCK_DEVICES.forEach(device => {
+      icons[device.id] = createDeviceIcon(device);
+    });
+    return icons;
+  }, []);
+  
+  return (
+    <>
+      <div className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-white/10">
+          <h3 className="text-lg font-semibold text-white">Mapa de Dispositivos</h3>
+          <p className="text-sm text-slate-400">Clique nos dispositivos para ver detalhes</p>
+        </div>
+        
+        <div className="relative h-[450px]">
+          <MapContainer
+            center={center}
+            zoom={13}
+            style={{ height: "100%", width: "100%" }}
+            zoomControl={true}
+            scrollWheelZoom={true}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            />
+            
+            {MOCK_DEVICES.map((device) => (
+              <Marker
+                key={device.id}
+                position={[device.lat, device.lng]}
+                icon={deviceIcons[device.id]}
+                eventHandlers={{
+                  click: () => setSelectedDevice(device),
+                }}
+              />
+            ))}
+          </MapContainer>
+          
+          {/* Legend */}
+          <div className="absolute bottom-4 left-4 z-[1000] bg-slate-900/90 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/10 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-red-500" />
+              <span className="text-sm text-slate-300">Alto risco</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-amber-500" />
+              <span className="text-sm text-slate-300">Moderado</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-emerald-500" />
+              <span className="text-sm text-slate-300">Baixo risco</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <DeviceInfoModal device={selectedDevice} onClose={() => setSelectedDevice(null)} />
+    </>
+  );
 }
 
 // 2FA Login Page
@@ -886,6 +1233,11 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
           <div className="text-5xl font-bold text-white mb-2">{sensorData.gas} ppm</div>
           <p className="text-sm text-slate-400">Campo 3 - ThingSpeak</p>
         </div>
+      </div>
+
+      {/* Device Map */}
+      <div className="mb-8">
+        <DeviceMap />
       </div>
 
       {/* Raw Data Card */}
