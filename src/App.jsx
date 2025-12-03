@@ -10,8 +10,8 @@ const MOCK_DEVICES = [
   {
     id: "001",
     name: "Dispositivo 001",
-    lat: -23.5505,
-    lng: -46.6333,
+    lat: -8.05250294245876,
+    lng: -34.885167228331994,
     status: "active",
     riskLevel: "moderate",
     riskPercent: 75,
@@ -23,8 +23,8 @@ const MOCK_DEVICES = [
   {
     id: "002",
     name: "Dispositivo 002",
-    lat: -23.5605,
-    lng: -46.6133,
+    lat: -8.052295054820497,
+    lng: -34.885848827371845,
     status: "active",
     riskLevel: "moderate",
     riskPercent: 40,
@@ -36,8 +36,8 @@ const MOCK_DEVICES = [
   {
     id: "003",
     name: "Dispositivo 003",
-    lat: -23.5405,
-    lng: -46.6533,
+    lat: -8.053875417301851,
+    lng: -34.884462003473075,
     status: "active",
     riskLevel: "high",
     riskPercent: 85,
@@ -49,8 +49,8 @@ const MOCK_DEVICES = [
   {
     id: "004",
     name: "Dispositivo 004",
-    lat: -23.5655,
-    lng: -46.6033,
+    lat: -8.054121070740555,
+    lng: -34.88502135754518,
     status: "active",
     riskLevel: "low",
     riskPercent: 25,
@@ -604,12 +604,22 @@ function createDeviceIcon(device) {
   });
 }
 
+// Calculate center point from devices
+function calculateDevicesCenter(devices) {
+  if (!devices || devices.length === 0) return [-8.05, -34.88];
+  
+  const sumLat = devices.reduce((sum, d) => sum + d.lat, 0);
+  const sumLng = devices.reduce((sum, d) => sum + d.lng, 0);
+  
+  return [sumLat / devices.length, sumLng / devices.length];
+}
+
 // Device Map Component (Leaflet + OpenStreetMap)
 function DeviceMap() {
   const [selectedDevice, setSelectedDevice] = useState(null);
   
-  // São Paulo center
-  const center = useMemo(() => [-23.5550, -46.6333], []);
+  // Calculate center based on all devices
+  const center = useMemo(() => calculateDevicesCenter(MOCK_DEVICES), []);
   
   // Create icons for each device (memoized to avoid recreation)
   const deviceIcons = useMemo(() => {
@@ -631,14 +641,15 @@ function DeviceMap() {
         <div className="relative h-[450px]">
           <MapContainer
             center={center}
-            zoom={13}
+            zoom={18}
             style={{ height: "100%", width: "100%" }}
             zoomControl={true}
             scrollWheelZoom={true}
           >
+            {/* Mapa claro com cores - OpenStreetMap padrão */}
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             
             {MOCK_DEVICES.map((device) => (
