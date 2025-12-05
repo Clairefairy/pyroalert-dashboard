@@ -2,9 +2,34 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+// Registrar componentes do Chart.js
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 const API_BASE = "https://pyroalert-mongodb.onrender.com";
 const ADAFRUIT_API = "https://io.adafruit.com/api/v2/pyroalert/feeds";
+const TEST_DEVICE_ID = "693306c876c035b62570fee6";
 
 // Função para converter valor do sensor de fumaça para porcentagem (0-4.8 = 0-100%)
 function convertSmokeToPercent(value) {
@@ -70,6 +95,137 @@ function calculateRiskFromSensors(device) {
   else riskLevel = "critical";
   
   return { riskLevel, riskPercent };
+}
+
+// Função para buscar histórico de leituras do dispositivo de teste
+async function fetchReadingsHistory() {
+  try {
+    // Buscar todas as leituras sem limite
+    const response = await fetch(`${API_BASE}/api/v1/readings/device/${TEST_DEVICE_ID}/history?limit=10000`);
+    if (!response.ok) throw new Error("Erro ao buscar histórico");
+    const data = await response.json();
+    
+    console.log("Resposta da API de histórico:", data);
+    
+    // A API pode retornar um array diretamente ou um objeto com readings/data
+    let readings = [];
+    if (Array.isArray(data)) {
+      readings = data;
+    } else if (data.readings && Array.isArray(data.readings)) {
+      readings = data.readings;
+    } else if (data.data && Array.isArray(data.data)) {
+      readings = data.data;
+    }
+    
+    console.log(`Total de leituras obtidas: ${readings.length}`);
+    if (readings.length > 0) {
+      console.log("Exemplo de leitura:", readings[0]);
+    }
+    
+    return readings;
+  } catch (error) {
+    console.error("Erro ao buscar histórico de leituras:", error);
+    return [];
+  }
+}
+
+// Filtros de período disponíveis
+const PERIOD_FILTERS = [
+  { key: "all", label: "Desde o início", days: null },
+  { key: "1y", label: "Último ano", days: 365 },
+  { key: "6m", label: "Últimos 6 meses", days: 180 },
+  { key: "3m", label: "Últimos 3 meses", days: 90 },
+  { key: "30d", label: "Últimos 30 dias", days: 30 },
+  { key: "7d", label: "Última semana", days: 7 },
+];
+
+// Função para obter a data de uma leitura
+function getReadingDate(reading) {
+  // Tentar obter a data de qualquer sensor disponível
+  const possibleDates = [
+    reading.smoke?.readAt,
+    reading.temp?.readAt,
+    reading.humid?.readAt,
+    reading.moist?.readAt,
+    reading.sense?.readAt,
+    reading.createdAt,
+    reading.updatedAt,
+  ].filter(Boolean);
+  
+  if (possibleDates.length === 0) return null;
+  return new Date(possibleDates[0]);
+}
+
+// Função para filtrar leituras por período
+function filterReadingsByPeriod(readings, periodKey) {
+  // Garantir que readings é um array
+  if (!Array.isArray(readings)) {
+    console.log("filterReadingsByPeriod: readings não é um array");
+    return [];
+  }
+  
+  const filter = PERIOD_FILTERS.find(f => f.key === periodKey);
+  
+  // Se filtro é "all" ou não encontrado, retorna todas as leituras
+  if (!filter || filter.days === null) {
+    console.log(`Filtro "${periodKey}": retornando todas as ${readings.length} leituras`);
+    return readings;
+  }
+  
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - filter.days * 24 * 60 * 60 * 1000);
+  
+  console.log(`Filtro "${periodKey}" (${filter.days} dias): cutoff = ${cutoffDate.toISOString()}`);
+  
+  const filtered = readings.filter(reading => {
+    const readDate = getReadingDate(reading);
+    if (!readDate) return false;
+    return readDate >= cutoffDate;
+  });
+  
+  console.log(`Filtro "${periodKey}": ${filtered.length} de ${readings.length} leituras`);
+  return filtered;
+}
+
+// Função para processar leituras para o gráfico
+function processReadingsForChart(readings, sensorType) {
+  // Garantir que readings é um array
+  if (!Array.isArray(readings) || readings.length === 0) {
+    return { labels: [], values: [] };
+  }
+  
+  // Ordenar por data (mais antiga primeiro)
+  const sorted = [...readings].sort((a, b) => {
+    const dateA = getReadingDate(a) || new Date(0);
+    const dateB = getReadingDate(b) || new Date(0);
+    return dateA - dateB;
+  });
+  
+  const labels = [];
+  const values = [];
+  
+  sorted.forEach(reading => {
+    const sensorData = reading[sensorType];
+    if (sensorData && sensorData.value !== undefined && sensorData.value !== null) {
+      const date = new Date(sensorData.readAt || reading.createdAt);
+      labels.push(date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }));
+      
+      let value = parseFloat(sensorData.value);
+      
+      // Converter valores conforme necessário
+      if (sensorType === "smoke") {
+        // Converter fumaça para porcentagem (0-4.8 = 0-100%)
+        value = (value / 4.8) * 100;
+      } else if (sensorType === "moist") {
+        // Converter umidade do solo: y = -65.79x + 169.08
+        value = (-65.79 * value) + 169.08;
+      }
+      
+      values.push(parseFloat(value.toFixed(2)));
+    }
+  });
+  
+  return { labels, values };
 }
 
 // Função para buscar dados da API Adafruit
@@ -597,6 +753,247 @@ function SensorCard({ label, value, unit, icon, rawValue, rawLabel, className = 
             <span className="text-slate-500">{rawLabel || "Valor bruto"}:</span> {rawValue}
           </p>
           <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-950" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Configuração de cores para os gráficos de cada sensor
+const SENSOR_CHART_CONFIGS = {
+  temp: {
+    label: "Temperatura (°C)",
+    color: "rgb(249, 115, 22)", // orange
+    bgColor: "rgba(249, 115, 22, 0.1)",
+    unit: "°C",
+  },
+  humid: {
+    label: "Umidade do Ar (%)",
+    color: "rgb(59, 130, 246)", // blue
+    bgColor: "rgba(59, 130, 246, 0.1)",
+    unit: "%",
+  },
+  moist: {
+    label: "Umidade do Solo (%)",
+    color: "rgb(245, 158, 11)", // amber
+    bgColor: "rgba(245, 158, 11, 0.1)",
+    unit: "%",
+  },
+  sense: {
+    label: "Sensação Térmica (°C)",
+    color: "rgb(236, 72, 153)", // rose
+    bgColor: "rgba(236, 72, 153, 0.1)",
+    unit: "°C",
+  },
+  smoke: {
+    label: "Fumaça (%)",
+    color: "rgb(34, 197, 94)", // emerald
+    bgColor: "rgba(34, 197, 94, 0.1)",
+    unit: "%",
+  },
+};
+
+// Componente de Gráfico de Evolução
+function SensorChart({ readings, sensorType }) {
+  const config = SENSOR_CHART_CONFIGS[sensorType];
+  
+  // readings já vem filtrado do componente pai
+  const chartData = useMemo(() => 
+    processReadingsForChart(readings, sensorType),
+    [readings, sensorType]
+  );
+  
+  const data = {
+    labels: chartData.labels,
+    datasets: [
+      {
+        label: config.label,
+        data: chartData.values,
+        borderColor: config.color,
+        backgroundColor: config.bgColor,
+        fill: true,
+        tension: 0.4,
+        pointRadius: chartData.values.length > 50 ? 0 : 3,
+        pointHoverRadius: 5,
+        pointBackgroundColor: config.color,
+        pointBorderColor: "#fff",
+        pointBorderWidth: 2,
+      },
+    ],
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+      tooltip: {
+        backgroundColor: "rgba(15, 23, 42, 0.95)",
+        titleColor: "#fff",
+        bodyColor: "#94a3b8",
+        borderColor: "rgba(255, 255, 255, 0.1)",
+        borderWidth: 1,
+        padding: 12,
+        displayColors: false,
+        callbacks: {
+          label: (context) => `${context.parsed.y}${config.unit}`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          color: "rgba(255, 255, 255, 0.05)",
+        },
+        ticks: {
+          color: "#64748b",
+          maxRotation: 45,
+          minRotation: 0,
+          maxTicksLimit: 8,
+          font: { size: 10 },
+        },
+      },
+      y: {
+        grid: {
+          color: "rgba(255, 255, 255, 0.05)",
+        },
+        ticks: {
+          color: "#64748b",
+          callback: (value) => `${value}${config.unit}`,
+          font: { size: 10 },
+        },
+      },
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index',
+    },
+  };
+
+  if (chartData.values.length === 0) {
+    return (
+      <div className="h-[200px] flex items-center justify-center text-slate-500 text-sm">
+        Sem dados disponíveis para este período
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-[200px]">
+      <Line data={data} options={options} />
+    </div>
+  );
+}
+
+// Componente de Seção de Gráficos
+function SensorChartsSection() {
+  const [readings, setReadings] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedPeriod, setSelectedPeriod] = useState("all");
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function loadReadings() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetchReadingsHistory();
+        console.log("Leituras carregadas no componente:", data.length);
+        setReadings(data);
+      } catch (err) {
+        console.error("Erro ao carregar:", err);
+        setError("Erro ao carregar histórico");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadReadings();
+  }, []);
+
+  // Memoizar leituras filtradas
+  const filteredReadings = useMemo(() => {
+    const filtered = filterReadingsByPeriod(readings, selectedPeriod);
+    console.log(`Período selecionado: ${selectedPeriod}, leituras filtradas: ${filtered.length}`);
+    return filtered;
+  }, [readings, selectedPeriod]);
+
+  const sensorTypes = [
+    { key: "temp", title: "Temperatura", icon: "🌡️" },
+    { key: "humid", title: "Umidade do Ar", icon: "💧" },
+    { key: "moist", title: "Umidade do Solo", icon: "🌱" },
+    { key: "sense", title: "Sensação Térmica", icon: "☀️" },
+    { key: "smoke", title: "Fumaça", icon: "💨" },
+  ];
+
+  return (
+    <div className="bg-white/5 backdrop-blur-xl rounded-2xl border border-white/10 p-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div>
+          <h3 className="text-lg font-semibold text-white">Evolução das Leituras</h3>
+          <p className="text-sm text-slate-400">Histórico do dispositivo de teste</p>
+        </div>
+        
+        {/* Filtro de Período */}
+        <div className="flex flex-wrap gap-2">
+          {PERIOD_FILTERS.map((filter) => (
+            <button
+              key={filter.key}
+              onClick={() => setSelectedPeriod(filter.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-all ${
+                selectedPeriod === filter.key
+                  ? "bg-indigo-500 text-white"
+                  : "bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white border border-white/10"
+              }`}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-[400px]">
+          <div className="flex flex-col items-center gap-3">
+            <Spinner className="w-8 h-8 text-indigo-400" />
+            <p className="text-slate-400 text-sm">Carregando histórico...</p>
+          </div>
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center h-[200px]">
+          <p className="text-red-400 text-sm">{error}</p>
+        </div>
+      ) : readings.length === 0 ? (
+        <div className="flex items-center justify-center h-[200px]">
+          <p className="text-slate-400 text-sm">Nenhuma leitura encontrada</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {sensorTypes.map(({ key, title, icon }) => (
+            <div
+              key={key}
+              className="bg-slate-800/30 rounded-xl p-4 border border-white/5"
+            >
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-lg">{icon}</span>
+                <h4 className="text-sm font-medium text-white">{title}</h4>
+                <span 
+                  className="ml-auto px-2 py-0.5 text-xs rounded-full"
+                  style={{ 
+                    backgroundColor: SENSOR_CHART_CONFIGS[key].bgColor,
+                    color: SENSOR_CHART_CONFIGS[key].color 
+                  }}
+                >
+                  {filteredReadings.length} leituras
+                </span>
+              </div>
+              <SensorChart
+                readings={filteredReadings}
+                sensorType={key}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1510,6 +1907,11 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
       {/* Device Map */}
       <div className="mb-8">
         <DeviceMap devices={devices} />
+      </div>
+
+      {/* Charts Section - Histórico de Leituras */}
+      <div className="mb-8">
+        <SensorChartsSection />
       </div>
 
       <p className="text-center text-sm text-slate-500 mt-8">Pyro Alert © 2025</p>
