@@ -130,6 +130,34 @@ input:focus, select:focus {
   animation: scale-in 0.2s ease-out forwards;
 }
 
+@keyframes fire-alert-modal {
+  0%,
+  100% {
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.35), inset 0 0 12px rgba(220, 38, 38, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 55px rgba(239, 68, 68, 0.75), inset 0 0 20px rgba(220, 38, 38, 0.35);
+  }
+}
+
+@keyframes fire-alert-text {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.animate-fire-alert-modal {
+  animation: fire-alert-modal 0.8s ease-in-out infinite;
+}
+
+.animate-fire-alert-text {
+  animation: fire-alert-text 0.55s ease-in-out infinite;
+}
+
 /* Map background */
 .map-background {
   background: 
@@ -183,6 +211,20 @@ input:focus, select:focus {
   animation: marker-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 
+.device-marker-wrapper-alert .marker-icon {
+  border-color: #ef4444 !important;
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.35), 0 0 30px rgba(239, 68, 68, 0.7);
+}
+
+.device-marker-wrapper-alert .marker-badge {
+  background-color: #dc2626 !important;
+}
+
+.pulse-ring-alert {
+  animation: marker-alert-pulse 0.7s cubic-bezier(0, 0, 0.2, 1) infinite !important;
+}
+
 .device-marker-wrapper .pulse-ring-delayed {
   animation-delay: 0.7s;
   width: 90px;
@@ -201,6 +243,21 @@ input:focus, select:focus {
   }
   100% {
     transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes marker-alert-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.55);
+    opacity: 0.95;
+  }
+  70% {
+    transform: translate(-50%, -50%) scale(1.6);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(0.55);
     opacity: 0;
   }
 }

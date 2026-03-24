@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -30,6 +30,17 @@ ChartJS.register(
 const API_BASE = "https://pyroalert-mongodb.onrender.com";
 const ADAFRUIT_API = "https://io.adafruit.com/api/v2/pyroalert/feeds";
 const TEST_DEVICE_ID = "693306c876c035b62570fee6";
+const FIRE_SMOKE_THRESHOLD = 0.7;
+
+function getDeviceSmokeRawValue(device) {
+  const rawSmoke = device?.rawValues?.smoke;
+  if (typeof rawSmoke === "number" && !Number.isNaN(rawSmoke)) return rawSmoke;
+
+  const smokePercent = parseFloat(device?.smokePercent);
+  if (!Number.isNaN(smokePercent)) return (smokePercent / 100) * 4.8;
+
+  return 0;
+}
 
 // Função para converter valor do sensor de fumaça para porcentagem (0-4.8 = 0-100%)
 function convertSmokeToPercent(value) {
@@ -1159,17 +1170,28 @@ function DeviceInfoModal({ device, onClose }) {
 // Create custom Leaflet icon for a device
 function createDeviceIcon(device) {
   const colors = getRiskColor(device.riskLevel);
+  const isAlert = Boolean(device.isAlerting);
+  const pulseColor = isAlert ? "rgba(239, 68, 68, 0.85)" : colors.pulse;
+  const centerIcon = isAlert
+    ? `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#ef4444" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01m-7.938 4h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.34 18c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+    `
+    : `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="${colors.bg}" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+      </svg>
+    `;
   
   return L.divIcon({
     className: 'custom-device-marker',
     html: `
-      <div class="device-marker-wrapper">
-        <div class="pulse-ring" style="background-color: ${colors.pulse}"></div>
-        <div class="pulse-ring pulse-ring-delayed" style="background-color: ${colors.pulse}"></div>
+      <div class="device-marker-wrapper ${isAlert ? "device-marker-wrapper-alert" : ""}">
+        <div class="pulse-ring ${isAlert ? "pulse-ring-alert" : ""}" style="background-color: ${pulseColor}"></div>
+        <div class="pulse-ring pulse-ring-delayed ${isAlert ? "pulse-ring-alert" : ""}" style="background-color: ${pulseColor}"></div>
         <div class="marker-icon" style="background-color: ${colors.bg}22; border-color: ${colors.bg}">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="${colors.bg}" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
+          ${centerIcon}
         </div>
         <div class="marker-badge" style="background-color: ${colors.bg}">${device.riskPercent}%</div>
         <div class="marker-label">${device.name}</div>
@@ -1178,6 +1200,40 @@ function createDeviceIcon(device) {
     iconSize: [120, 90],
     iconAnchor: [60, 45],
   });
+}
+
+function FireAlertModal({ device, onAcknowledge }) {
+  if (!device) return null;
+
+  return (
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-red-400/60 bg-slate-950/95 shadow-2xl shadow-red-900/50 animate-fire-alert-modal">
+        <div className="border-b border-red-500/30 px-6 py-4">
+          <h2 className="text-2xl font-black uppercase tracking-wide text-red-400 animate-fire-alert-text">
+            Alerta de Incêndio!
+          </h2>
+        </div>
+
+        <div className="px-6 py-5">
+          <p className="text-lg text-slate-100">
+            Fumaça detectada pelo dispositivo <span className="font-bold text-red-400">{device.id}</span>.
+          </p>
+          <p className="mt-2 text-sm text-slate-400">
+            Nível atual de fumaça: <span className="font-semibold text-red-300">{(parseFloat(device.smokePercent) || 0).toFixed(1)}%</span>
+          </p>
+        </div>
+
+        <div className="px-6 pb-6">
+          <button
+            onClick={onAcknowledge}
+            className="w-full rounded-xl bg-red-600 py-3 text-lg font-bold uppercase text-white transition hover:bg-red-700"
+          >
+            ok
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Calculate center point from devices
@@ -1733,13 +1789,41 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
   const [isLoading, setIsLoading] = useState(false);
   const [devices, setDevices] = useState(INITIAL_DEVICES);
   const [lastUpdate, setLastUpdate] = useState(new Date().toLocaleString("pt-BR"));
+  const [isFireAlertVisible, setIsFireAlertVisible] = useState(false);
+  const [isFireAlertAcknowledged, setIsFireAlertAcknowledged] = useState(false);
+  const [isShortcutAlertActive, setIsShortcutAlertActive] = useState(false);
+  const fireAudioRef = useRef(null);
+  const isUpdatingRef = useRef(false);
+  const shortcutAlertRef = useRef(false);
+
+  const device001 = useMemo(
+    () => devices.find((device) => device.id === "001") || null,
+    [devices]
+  );
+
+  const isDevice001InFireRisk = useMemo(
+    () => (device001 ? getDeviceSmokeRawValue(device001) > FIRE_SMOKE_THRESHOLD : false),
+    [device001]
+  );
+
+  const isFireActive = isShortcutAlertActive || isDevice001InFireRisk;
+
+  useEffect(() => {
+    shortcutAlertRef.current = isShortcutAlertActive;
+  }, [isShortcutAlertActive]);
 
   // Função para atualizar dados do Dispositivo 1 com dados reais da API
   const updateDeviceData = useCallback(async () => {
+    if (isUpdatingRef.current) return;
+
+    isUpdatingRef.current = true;
     setIsLoading(true);
     try {
       const adafruitData = await fetchAdafruitData();
       if (adafruitData) {
+        const latestSmokeRaw = adafruitData.rawValues?.smoke ?? 0;
+        const isApiFireRisk = latestSmokeRaw > FIRE_SMOKE_THRESHOLD;
+
         setDevices(prevDevices => 
           prevDevices.map(device => {
             if (device.id === "001") {
@@ -1762,20 +1846,82 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
           })
         );
         setLastUpdate(new Date().toLocaleString("pt-BR"));
+
+        if (!isApiFireRisk && !shortcutAlertRef.current) {
+          setIsFireAlertAcknowledged(false);
+        }
       }
     } catch (error) {
       console.error("Erro ao atualizar dados:", error);
     } finally {
       setIsLoading(false);
+      isUpdatingRef.current = false;
     }
   }, []);
 
-  // Buscar dados ao carregar e a cada 30 segundos
+  // Buscar dados ao carregar e em tempo quase real
   useEffect(() => {
     updateDeviceData();
-    const interval = setInterval(updateDeviceData, 30000);
+    const interval = setInterval(updateDeviceData, 5000);
     return () => clearInterval(interval);
   }, [updateDeviceData]);
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.shiftKey && event.key.toLowerCase() === "a") {
+        setIsShortcutAlertActive(true);
+        setIsFireAlertAcknowledged(false);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (isFireActive && !isFireAlertAcknowledged) {
+      setIsFireAlertVisible(true);
+    } else {
+      setIsFireAlertVisible(false);
+    }
+  }, [isFireActive, isFireAlertAcknowledged]);
+
+  useEffect(() => {
+    if (!fireAudioRef.current) {
+      fireAudioRef.current = new Audio("/alert.mp3");
+      fireAudioRef.current.preload = "auto";
+      fireAudioRef.current.loop = true;
+    }
+
+    if (isFireAlertVisible) {
+      fireAudioRef.current
+        .play()
+        .catch((error) => console.warn("Nao foi possivel tocar o alerta sonoro:", error));
+    } else {
+      fireAudioRef.current.pause();
+      fireAudioRef.current.currentTime = 0;
+    }
+
+    return () => {
+      if (fireAudioRef.current) {
+        fireAudioRef.current.pause();
+      }
+    };
+  }, [isFireAlertVisible]);
+
+  const devicesWithAlertState = useMemo(
+    () =>
+      devices.map((device) => ({
+        ...device,
+        isAlerting: device.id === "001" && isFireActive,
+      })),
+    [devices, isFireActive]
+  );
+
+  const acknowledgeAlert = useCallback(() => {
+    setIsFireAlertVisible(false);
+    setIsFireAlertAcknowledged(true);
+  }, []);
 
   // Calcular médias de todos os dispositivos
   const averages = useMemo(() => {
@@ -1906,7 +2052,7 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
 
       {/* Device Map */}
       <div className="mb-8">
-        <DeviceMap devices={devices} />
+        <DeviceMap devices={devicesWithAlertState} />
       </div>
 
       {/* Charts Section - Histórico de Leituras */}
@@ -1915,6 +2061,13 @@ function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
       </div>
 
       <p className="text-center text-sm text-slate-500 mt-8">Pyro Alert © 2025</p>
+
+      {isFireAlertVisible && (
+        <FireAlertModal
+          device={device001 || { id: "001", smokePercent: 0 }}
+          onAcknowledge={acknowledgeAlert}
+        />
+      )}
     </div>
   );
 }
