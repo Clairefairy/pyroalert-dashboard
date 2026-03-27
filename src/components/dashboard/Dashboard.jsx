@@ -53,6 +53,10 @@ export function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
                 soilHumidity: adafruitData.soilHumidity || device.soilHumidity,
                 heatIndex: adafruitData.heatIndex || device.heatIndex,
                 smokePercent: parseFloat(adafruitData.smokePercent) || device.smokePercent,
+                pluvi:
+                  typeof adafruitData.pluvi === "number" && !Number.isNaN(adafruitData.pluvi)
+                    ? adafruitData.pluvi
+                    : device.pluvi,
                 rawValues: adafruitData.rawValues || {},
               };
               const { riskLevel, riskPercent } = calculateRiskFromSensors(updatedDevice);
@@ -145,8 +149,9 @@ export function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
         soilHumidity: acc.soilHumidity + d.soilHumidity,
         heatIndex: acc.heatIndex + d.heatIndex,
         smokePercent: acc.smokePercent + (parseFloat(d.smokePercent) || 0),
+        pluvi: acc.pluvi + (typeof d.pluvi === "number" ? d.pluvi : parseFloat(d.pluvi) || 0),
       }),
-      { temperature: 0, airHumidity: 0, soilHumidity: 0, heatIndex: 0, smokePercent: 0 }
+      { temperature: 0, airHumidity: 0, soilHumidity: 0, heatIndex: 0, smokePercent: 0, pluvi: 0 }
     );
 
     const count = devices.length;
@@ -156,6 +161,7 @@ export function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
       soilHumidity: Math.round(sum.soilHumidity / count),
       heatIndex: (sum.heatIndex / count).toFixed(1),
       smokePercent: (sum.smokePercent / count).toFixed(1),
+      pluvi: (sum.pluvi / count).toFixed(1),
     };
   }, [devices]);
 
@@ -209,70 +215,81 @@ export function Dashboard({ user, onLogout, onOpenProfile, isLoadingProfile }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-        <div className="bg-gradient-to-br from-orange-500/20 to-red-500/20 backdrop-blur-xl p-5 rounded-2xl border border-orange-500/20">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-orange-300 uppercase tracking-wide">Temperatura</span>
-            <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 sm:gap-3 mb-8">
+        <div className="bg-gradient-to-br from-orange-500/20 to-red-500/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-orange-500/20 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-orange-300 uppercase tracking-wide truncate">Temp.</span>
+            <div className="w-7 h-7 shrink-0 bg-orange-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
             </div>
           </div>
-          <div className="text-3xl font-bold text-white mb-1">{averages.temperature}°C</div>
-          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.temperature}°C</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
         </div>
 
-        <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-xl p-5 rounded-2xl border border-blue-500/20">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-blue-300 uppercase tracking-wide">Umidade Ar</span>
-            <div className="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <div className="bg-gradient-to-br from-blue-500/20 to-cyan-500/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-blue-500/20 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-blue-300 uppercase tracking-wide truncate">Umid. ar</span>
+            <div className="w-7 h-7 shrink-0 bg-blue-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
               </svg>
             </div>
           </div>
-          <div className="text-3xl font-bold text-white mb-1">{averages.airHumidity}%</div>
-          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.airHumidity}%</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
         </div>
 
-        <div className="bg-gradient-to-br from-amber-500/20 to-yellow-500/20 backdrop-blur-xl p-5 rounded-2xl border border-amber-500/20">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-amber-300 uppercase tracking-wide">Umidade Solo</span>
-            <div className="w-8 h-8 bg-amber-500/20 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <div className="bg-gradient-to-br from-amber-500/20 to-yellow-500/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-amber-500/20 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-amber-300 uppercase tracking-wide truncate">Umid. solo</span>
+            <div className="w-7 h-7 shrink-0 bg-amber-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
               </svg>
             </div>
           </div>
-          <div className="text-3xl font-bold text-white mb-1">{averages.soilHumidity}%</div>
-          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.soilHumidity}%</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
         </div>
 
-        <div className="bg-gradient-to-br from-rose-500/20 to-pink-500/20 backdrop-blur-xl p-5 rounded-2xl border border-rose-500/20">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-rose-300 uppercase tracking-wide">Sens. Térmica</span>
-            <div className="w-8 h-8 bg-rose-500/20 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <div className="bg-gradient-to-br from-rose-500/20 to-pink-500/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-rose-500/20 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-rose-300 uppercase tracking-wide truncate">Sens. térm.</span>
+            <div className="w-7 h-7 shrink-0 bg-rose-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
           </div>
-          <div className="text-3xl font-bold text-white mb-1">{averages.heatIndex}°C</div>
-          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.heatIndex}°C</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-500/20 to-green-500/20 backdrop-blur-xl p-5 rounded-2xl border border-emerald-500/20">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-medium text-emerald-300 uppercase tracking-wide">Fumaça</span>
-            <div className="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+        <div className="bg-gradient-to-br from-emerald-500/20 to-green-500/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-emerald-500/20 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-emerald-300 uppercase tracking-wide truncate">Fumaça</span>
+            <div className="w-7 h-7 shrink-0 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
               </svg>
             </div>
           </div>
-          <div className="text-3xl font-bold text-white mb-1">{averages.smokePercent}%</div>
-          <p className="text-xs text-slate-400">Média dos dispositivos</p>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.smokePercent}%</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
+        </div>
+
+        <div className="bg-gradient-to-br from-sky-500/20 to-cyan-600/20 backdrop-blur-xl p-3 sm:p-4 rounded-xl border border-sky-500/25 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-2">
+            <span className="text-[10px] sm:text-xs font-medium text-sky-300 uppercase tracking-wide truncate">Pluviôm.</span>
+            <div className="w-7 h-7 shrink-0 bg-sky-500/20 rounded-lg flex items-center justify-center text-sm" aria-hidden>
+              🌧️
+            </div>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold text-white mb-0.5 tabular-nums">{averages.pluvi} mm</div>
+          <p className="text-[10px] sm:text-xs text-slate-400 truncate">Média</p>
         </div>
       </div>
 

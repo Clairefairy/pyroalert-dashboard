@@ -28,6 +28,13 @@ export function convertSoilHumidityToPercent(value) {
   return soilHumidityPercentFromRaw(value).toFixed(1);
 }
 
+/** Leitura bruta do pluviômetro (count) → milímetros de chuva */
+export function pluviRawToMm(raw) {
+  const n = parseFloat(raw);
+  if (Number.isNaN(n)) return 0;
+  return n * 0.2;
+}
+
 export function calculateRiskFromSensors(device) {
   let riskPoints = 0;
 

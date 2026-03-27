@@ -1,5 +1,5 @@
 import { ADAFRUIT_API } from "../constants/config.js";
-import { convertSmokeToPercent, convertSoilHumidityToPercent } from "../utils/sensors.js";
+import { convertSmokeToPercent, convertSoilHumidityToPercent, pluviRawToMm } from "../utils/sensors.js";
 
 export async function fetchAdafruitData() {
   try {
@@ -9,6 +9,7 @@ export async function fetchAdafruitData() {
       { key: "pyroalert.temp22", field: "airHumidity" },
       { key: "pyroalert.umi22", field: "temperature" },
       { key: "pyroalert.sense22", field: "heatIndex" },
+      { key: "pyroalert.countpluvi", field: "pluvi" },
     ];
 
     const results = await Promise.all(
@@ -24,6 +25,8 @@ export async function fetchAdafruitData() {
       sensorData.rawValues[field] = value;
       sensorData[field] = value;
     });
+
+    sensorData.pluvi = pluviRawToMm(sensorData.rawValues.pluvi ?? 0);
 
     const rawSoilHumidity = sensorData.soilHumidity;
     sensorData.rawValues.soilHumidityRaw = rawSoilHumidity;

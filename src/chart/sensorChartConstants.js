@@ -34,6 +34,13 @@ export const SENSOR_CHART_CONFIGS = {
     unit: "%",
     badgeClass: "chart-sensor-badge--smoke",
   },
+  pluvi: {
+    label: "Chuva (mm)",
+    color: "rgb(14, 165, 233)",
+    bgColor: "rgba(14, 165, 233, 0.1)",
+    unit: " mm",
+    badgeClass: "chart-sensor-badge--pluvi",
+  },
 };
 
 export const CHART_SECTION_SENSORS = [
@@ -42,4 +49,5 @@ export const CHART_SECTION_SENSORS = [
   { key: "moist", title: "Umidade do Solo", icon: "🌱" },
   { key: "sense", title: "Sensação Térmica", icon: "☀️" },
   { key: "smoke", title: "Fumaça", icon: "💨" },
+  { key: "pluvi", title: "Pluviômetro", icon: "🌧️" },
 ];

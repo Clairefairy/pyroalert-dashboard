@@ -28,6 +28,7 @@ export const INITIAL_DEVICES = [
     temperature: 32,
     heatIndex: 35,
     smokePercent: 9.5,
+    pluvi: 0,
     isRealData: true,
     rawValues: {},
   },
@@ -44,6 +45,7 @@ export const INITIAL_DEVICES = [
     temperature: 28,
     heatIndex: 30,
     smokePercent: 3.8,
+    pluvi: 2.8,
     isRealData: false,
   },
   {
@@ -59,6 +61,7 @@ export const INITIAL_DEVICES = [
     temperature: 38,
     heatIndex: 42,
     smokePercent: 12.9,
+    pluvi: 1.4,
     isRealData: false,
   },
   {
@@ -74,6 +77,7 @@ export const INITIAL_DEVICES = [
     temperature: 24,
     heatIndex: 25,
     smokePercent: 2.5,
+    pluvi: 4.5,
     isRealData: false,
   },
 ];

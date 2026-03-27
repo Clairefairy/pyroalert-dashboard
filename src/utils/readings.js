@@ -1,5 +1,5 @@
 import { PERIOD_FILTERS } from "../constants/config.js";
-import { smokeRawToPercentUncapped, soilHumidityPercentFromRaw } from "./sensors.js";
+import { pluviRawToMm, smokeRawToPercentUncapped, soilHumidityPercentFromRaw } from "./sensors.js";
 
 export function getReadingDate(reading) {
   const possibleDates = [
@@ -8,6 +8,7 @@ export function getReadingDate(reading) {
     reading.humid?.readAt,
     reading.moist?.readAt,
     reading.sense?.readAt,
+    reading.pluvi?.readAt,
     reading.createdAt,
     reading.updatedAt,
   ].filter(Boolean);
@@ -66,6 +67,8 @@ export function processReadingsForChart(readings, sensorType) {
         value = smokeRawToPercentUncapped(value);
       } else if (sensorType === "moist") {
         value = soilHumidityPercentFromRaw(value);
+      } else if (sensorType === "pluvi") {
+        value = pluviRawToMm(value);
       }
 
       values.push(parseFloat(value.toFixed(2)));

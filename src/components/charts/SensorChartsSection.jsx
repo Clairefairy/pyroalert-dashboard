@@ -6,11 +6,31 @@ import { filterReadingsByPeriod } from "../../utils/readings.js";
 import { Spinner } from "../Spinner.jsx";
 import { SensorChart } from "./SensorChart.jsx";
 
+function createSimulatedReadings(amount = 10) {
+  const now = Date.now();
+
+  const randomInRange = (min, max) => Number((Math.random() * (max - min) + min).toFixed(2));
+
+  return Array.from({ length: amount }, (_, index) => {
+    const readAt = new Date(now - (amount - index) * 5 * 60 * 1000).toISOString();
+    return {
+      temp: { value: randomInRange(24, 38), readAt },
+      humid: { value: randomInRange(35, 85), readAt },
+      moist: { value: randomInRange(1200, 3800), readAt },
+      sense: { value: randomInRange(26, 44), readAt },
+      smoke: { value: randomInRange(80, 600), readAt },
+      pluvi: { value: randomInRange(0, 45), readAt },
+      createdAt: readAt,
+    };
+  });
+}
+
 export function SensorChartsSection() {
   const [readings, setReadings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState("all");
   const [error, setError] = useState(null);
+  const [simulatedReadings, setSimulatedReadings] = useState([]);
 
   useEffect(() => {
     async function loadReadings() {
@@ -29,9 +49,12 @@ export function SensorChartsSection() {
     loadReadings();
   }, []);
 
+  const isUsingSimulation = simulatedReadings.length > 0;
+  const chartSourceReadings = isUsingSimulation ? simulatedReadings : readings;
+
   const filteredReadings = useMemo(
-    () => filterReadingsByPeriod(readings, selectedPeriod),
-    [readings, selectedPeriod]
+    () => filterReadingsByPeriod(chartSourceReadings, selectedPeriod),
+    [chartSourceReadings, selectedPeriod]
   );
 
   return (
@@ -71,9 +94,16 @@ export function SensorChartsSection() {
         <div className="flex items-center justify-center h-[200px]">
           <p className="text-red-400 text-sm">{error}</p>
         </div>
-      ) : readings.length === 0 ? (
-        <div className="flex items-center justify-center h-[200px]">
+      ) : readings.length === 0 && !isUsingSimulation ? (
+        <div className="flex flex-col items-center justify-center h-[200px] gap-4">
           <p className="text-slate-400 text-sm">Nenhuma leitura encontrada</p>
+          <button
+            type="button"
+            onClick={() => setSimulatedReadings(createSimulatedReadings(10))}
+            className="px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-medium transition-all"
+          >
+            Simular dados
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
